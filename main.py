@@ -36,30 +36,38 @@ async def fetch_wyzie_subtitles(api_key: str, video_type: str, video_id: str):
     if not api_key:
         return {"subtitles": []}
 
-    # Separar el ID de IMDb si es un episodio de serie (ejemplo: tt18259538:1:2)
+    # Extraer ID base de IMDb (ejemplo: tt18259538:1:2)
     parts = video_id.split(":")
     imdb_id = parts[0]
 
-    # Endpoint oficial exacto según la documentación de Wyzie:
-    # https://sub.wyzie.io/search?id=...&key=...
+    # Endpoint base documentado
     url = "https://sub.wyzie.io/search"
     
+    # Parámetros según la documentación de la imagen
     params = {
         "id": imdb_id,
         "key": api_key,
-        "language": "es",
-        "ai_translate": "true"
+        "language": "es"
     }
 
-    # Si es una serie y vienen temporada y episodio
+    # Si la clave es PRO y quieres forzar traducción por IA, se incluye ai_translate
+    # Si te da error 403, simplemente remueve "ai_translate" o asegúrate de usar una key válida.
+    # params["ai_translate"] = "true"
+
+    # Si es serie, agregar temporada y episodio como indica la imagen
     if len(parts) >= 3:
         params["season"] = parts[1]
         params["episode"] = parts[2]
 
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "application/json"
+    }
+
     async with httpx.AsyncClient(timeout=12.0) as client:
         try:
-            logger.info(f"Consultando Wyzie oficial en sub.wyzie.io para ID: {imdb_id}")
-            response = await client.get(url, params=params)
+            logger.info(f"Petición oficial a Wyzie para ID: {imdb_id}")
+            response = await client.get(url, params=params, headers=headers)
 
             if response.status_code == 200:
                 data = response.json()
@@ -68,21 +76,19 @@ async def fetch_wyzie_subtitles(api_key: str, video_type: str, video_id: str):
                 stremio_subs = []
                 for index, sub in enumerate(wyzie_subs):
                     sub_url = sub.get("url", "")
-                    
-                    # Ignorar respuestas de error formateadas como subtítulo
-                    if sub_url and "no API key set" not in sub_url:
+                    if sub_url:
                         stremio_subs.append({
-                            "id": sub.get("id", f"wyzie_ai_es_{index}"),
+                            "id": sub.get("id", f"wyzie_es_{index}"),
                             "url": sub_url,
                             "lang": "spa"
                         })
                 
                 return {"subtitles": stremio_subs}
             else:
-                logger.warning(f"Wyzie devolvió status code: {response.status_code}")
+                logger.warning(f"Wyzie devolvió HTTP {response.status_code}")
 
         except Exception as e:
-            logger.error(f"Error consultando la API de Wyzie: {e}")
+            logger.error(f"Error procesando subtítulos: {e}")
 
     return {"subtitles": []}
 
