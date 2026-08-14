@@ -36,48 +36,63 @@ async def fetch_wyzie_subtitles(api_key: str, video_type: str, video_id: str):
     if not api_key:
         return {"subtitles": []}
 
+    # Separar el ID de IMDb si es un episodio de serie (ejemplo: tt18259538:1:2)
+    parts = video_id.split(":")
+    imdb_id = parts[0]
+
+    # Endpoint oficial exacto según la documentación de Wyzie:
+    # https://sub.wyzie.io/search?id=...&key=...
+    url = "https://sub.wyzie.io/search"
+    
+    params = {
+        "id": imdb_id,
+        "key": api_key,
+        "language": "es",
+        "ai_translate": "true"
+    }
+
+    # Si es una serie y vienen temporada y episodio
+    if len(parts) >= 3:
+        params["season"] = parts[1]
+        params["episode"] = parts[2]
+
     async with httpx.AsyncClient(timeout=12.0) as client:
         try:
-            # Petición directa al addon oficial de Wyzie concatenando la API Key correctamente
-            # Wyzie acepta la clave en la URL como: https://stremio.wyzie.io/token=<API_KEY>/subtitles/...
-            # O en formato base: https://stremio.wyzie.io/<API_KEY>/subtitles/...
-            
-            clean_type = "series" if video_type in ["series", "tv"] else "movie"
-            url = f"https://stremio.wyzie.io/{api_key}/subtitles/{clean_type}/{video_id}.json"
-            
-            params = {
-                "ai_translate": "true",
-                "langs": "es"
-            }
-
-            logger.info(f"Pidiendo subtítulos a Wyzie para {video_id}...")
+            logger.info(f"Consultando Wyzie oficial en sub.wyzie.io para ID: {imdb_id}")
             response = await client.get(url, params=params)
 
             if response.status_code == 200:
                 data = response.json()
-                wyzie_subs = data.get("subtitles", [])
-                
+                wyzie_subs = data if isinstance(data, list) else data.get("subtitles", [])
+
                 stremio_subs = []
                 for index, sub in enumerate(wyzie_subs):
-                    stremio_subs.append({
-                        "id": sub.get("id", f"wyzie_ai_es_{index}"),
-                        "url": sub.get("url", ""),
-                        "lang": "spa"
-                    })
+                    sub_url = sub.get("url", "")
+                    
+                    # Ignorar respuestas de error formateadas como subtítulo
+                    if sub_url and "no API key set" not in sub_url:
+                        stremio_subs.append({
+                            "id": sub.get("id", f"wyzie_ai_es_{index}"),
+                            "url": sub_url,
+                            "lang": "spa"
+                        })
+                
                 return {"subtitles": stremio_subs}
             else:
-                logger.warning(f"Wyzie respondió status: {response.status_code}")
+                logger.warning(f"Wyzie devolvió status code: {response.status_code}")
 
         except Exception as e:
-            logger.error(f"Error procesando petición: {e}")
+            logger.error(f"Error consultando la API de Wyzie: {e}")
 
     return {"subtitles": []}
 
 @app.get("/{user_api_key}/subtitles/{video_type}/{video_id}.json")
 async def get_subtitles_base(user_api_key: str, video_type: str, video_id: str):
-    return await fetch_wyzie_subtitles(user_api_key, video_type, video_id)
+    clean_type = "series" if video_type in ["series", "tv"] else "movie"
+    return await fetch_wyzie_subtitles(user_api_key, clean_type, video_id)
 
 @app.get("/{user_api_key}/subtitles/{video_type}/{video_id}/{extra:path}.json")
 async def get_subtitles_extra(user_api_key: str, video_type: str, video_id: str, extra: str):
+    clean_type = "series" if video_type in ["series", "tv"] else "movie"
     full_id = f"{video_id}:{extra}" if extra else video_id
-    return await fetch_wyzie_subtitles(user_api_key, video_type, full_id)
+    return await fetch_wyzie_subtitles(user_api_key, clean_type, full_id)
